@@ -2,23 +2,19 @@
 """
 AI Digest
 Pulls: Hacker News (AI-related top stories), GitHub trending repos, arXiv recent papers.
-Sends a single HTML email digest.
+Sends a single HTML email digest via SendGrid API.
 
-Run via cron / GitHub Actions on a schedule.
 Requires env vars:
-  GMAIL_ADDRESS   - your gmail address (sender + recipient, or set RECIPIENT separately)
-  GMAIL_APP_PASSWORD - Gmail App Password (not your normal password)
-  RECIPIENT (optional) - defaults to GMAIL_ADDRESS
+  SENDGRID_API_KEY   - SendGrid API key
+  FROM_EMAIL         - Verified sender email in SendGrid
+  RECIPIENT          - Destination email
 """
 
 import os
 import re
-import smtplib
 import requests
 import feedparser
 from datetime import datetime
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 
 AI_KEYWORDS = [
     "ai", "llm", "gpt", "claude", "gemini", "anthropic", "openai",
@@ -30,7 +26,6 @@ def is_ai_related(text):
     text = text.lower()
     return any(kw in text for kw in AI_KEYWORDS)
 
-# ---------- Hacker News ----------
 def fetch_hn_ai_stories(limit=8):
     top_ids = requests.get(
         "https://hacker-news.firebaseio.com/v0/topstories.json", timeout=10
@@ -54,7 +49,6 @@ def fetch_hn_ai_stories(limit=8):
             })
     return stories
 
-# ---------- GitHub Trending ----------
 def fetch_github_trending(languages=("python", "typescript"), limit=5):
     repos = []
     for lang in languages:
@@ -75,7 +69,6 @@ def fetch_github_trending(languages=("python", "typescript"), limit=5):
             print(f"GitHub trending fetch failed for {lang}: {e}")
     return repos
 
-# ---------- arXiv ----------
 def fetch_arxiv_papers(limit=5):
     feed_url = (
         "http://export.arxiv.org/api/query?"
@@ -92,7 +85,6 @@ def fetch_arxiv_papers(limit=5):
         })
     return papers
 
-# ---------- Build Email ----------
 def build_html(hn_stories, gh_repos, papers):
     date_str = datetime.now().strftime("%B %d, %Y")
     html = f"<h2>🤖 AI Digest — {date_str}</h2>"
@@ -111,24 +103,32 @@ def build_html(hn_stories, gh_repos, papers):
     for p in papers:
         html += f'<li><a href="{p["url"]}">{p["title"]}</a><br><small>{p["summary"]}</small></li>'
     html += "</ul>"
-
     return html
 
-# ---------- Send Email ----------
-def send_email(html_body):
-    sender = os.environ["GMAIL_ADDRESS"]
-    password = os.environ["GMAIL_APP_PASSWORD"]
-    recipient = os.environ.get("RECIPIENT", sender)
+def send_email_sendgrid(html_body):
+    api_key = os.environ["SENDGRID_API_KEY"]
+    from_email = os.environ["FROM_EMAIL"]
+    to_email = os.environ["RECIPIENT"]
 
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"AI Digest — {datetime.now().strftime('%b %d, %Y')}"
-    msg["From"] = sender
-    msg["To"] = recipient
-    msg.attach(MIMEText(html_body, "html"))
+    payload = {
+        "personalizations": [{"to": [{"email": to_email}]}],
+        "from": {"email": from_email},
+        "subject": f"AI Digest — {datetime.now().strftime('%b %d, %Y')}",
+        "content": [{"type": "text/html", "value": html_body}],
+    }
 
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-        server.login(sender, password)
-        server.sendmail(sender, recipient, msg.as_string())
+    resp = requests.post(
+        "https://api.sendgrid.com/v3/mail/send",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        json=payload,
+        timeout=20,
+    )
+
+    if resp.status_code >= 300:
+        raise RuntimeError(f"SendGrid error {resp.status_code}: {resp.text}")
 
 def main():
     print("Fetching HN...")
@@ -140,7 +140,7 @@ def main():
 
     html = build_html(hn_stories, gh_repos, papers)
     print("Sending email...")
-    send_email(html)
+    send_email_sendgrid(html)
     print("Done.")
 
 if __name__ == "__main__":
