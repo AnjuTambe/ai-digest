@@ -1,0 +1,25 @@
+name: AI Digest Email
+
+on:
+  schedule:
+    - cron: "0 8 * * *"
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
+
+jobs:
+  send-digest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Run AI digest script
+        env:
+          SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
+          FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
+          RECIPIENT: ${{ secrets.RECIPIENT }}
+        run: python scripts/ai_digest.py
